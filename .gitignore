@@ -22,3 +22,10 @@ frontend/dist/
 
 # Misc
 *.log
+
+#venv
+backend/venv
+CONTEXT.md 
+
+Problem_Statement
+Commits.md
