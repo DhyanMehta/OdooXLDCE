@@ -1,109 +1,137 @@
-import { useEffect, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useState } from "react";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 
-import { Empty, Feedback, Spinner } from "../../components/ui/Feedback";
+import { Empty, Feedback, PageState } from "../../components/ui/Feedback";
 import { useAuth } from "../../hooks/useAuth";
-import { useClubId } from "../../hooks/useClubId";
-import { api, ApiError } from "../../services/api";
-import type { Membership, Order, Plan } from "../../types/api";
-
+import { useAsyncResource } from "../../hooks/useAsyncResource";
+import { statusBadgeClass } from "../../lib/format";
+import { clubKey, invalidate } from "../../lib/queryCache";
+import { api, formatApiError } from "../../services/api";
 export function MembershipsPage() {
-  const { me } = useAuth();
-  const { clubId, loading: clubLoading } = useClubId();
+  const { me, activeClub } = useAuth();
+  const [params] = useSearchParams();
   const navigate = useNavigate();
-  const [plans, setPlans] = useState<Plan[]>([]);
-  const [memberships, setMemberships] = useState<Membership[]>([]);
-  const [error, setError] = useState<string | null>(null);
-  const [busyId, setBusyId] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const clubId = params.get("club") ?? activeClub?.club.id ?? null;
+  const clubName =
+    activeClub?.club.id === clubId
+      ? activeClub.club.name
+      : me?.clubs.find((c) => c.club.id === clubId)?.club.name;
 
-  useEffect(() => {
-    if (!clubId) {
-      setLoading(clubLoading);
-      return;
-    }
-    let cancelled = false;
-    async function load() {
-      try {
-        const p = await api.get<Plan[]>(`/api/v1/clubs/${clubId}/plans`);
-        let m: Membership[] = [];
-        if (me) m = await api.get<Membership[]>(`/api/v1/clubs/${clubId}/me/memberships`);
-        if (!cancelled) {
-          setPlans(p);
-          setMemberships(m);
-        }
-      } catch (err) {
-        if (!cancelled) setError(err instanceof ApiError ? err.message : "Failed to load");
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    }
-    void load();
-    return () => {
-      cancelled = true;
-    };
-  }, [clubId, clubLoading, me]);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const plansRes = useAsyncResource(
+    clubId
+      ? () =>
+          api.get("/api/v1/clubs/{club_id}/plans", {
+            params: { path: { club_id: clubId } },
+          })
+      : null,
+    [clubId],
+    { cacheKeys: clubId ? [clubKey(clubId, "plans")] : [] },
+  );
+  const membershipsRes = useAsyncResource(
+    me && clubId
+      ? () =>
+          api.get("/api/v1/clubs/{club_id}/me/memberships", {
+            params: { path: { club_id: clubId } },
+          })
+      : null,
+    [me?.user.id, clubId],
+    { cacheKeys: clubId ? [clubKey(clubId, "memberships")] : [] },
+  );
+
+  if (!clubId) {
+    return (
+      <Feedback tone="warn">
+        Pick a club first from the <Link to="/clubs">clubs directory</Link>.
+      </Feedback>
+    );
+  }
 
   async function buy(planId: string) {
     if (!clubId) return;
     if (!me) {
-      navigate("/login");
+      navigate(`/login?next=${encodeURIComponent(`/memberships?club=${clubId}`)}`);
       return;
     }
     setBusyId(planId);
     setError(null);
     try {
-      const order = await api.post<Order>(`/api/v1/clubs/${clubId}/orders/membership`, {
-        plan_id: planId,
+      const order = await api.post("/api/v1/clubs/{club_id}/orders/membership", {
+        params: { path: { club_id: clubId } },
+        body: { plan_id: planId },
       });
+      invalidate(clubKey(clubId, "memberships"), clubKey(clubId, "plans"), "orders");
       navigate(`/orders/${order.id}`);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Could not start purchase");
+      setError(formatApiError(err));
     } finally {
       setBusyId(null);
     }
   }
 
-  if (clubLoading || loading) return <Spinner />;
-  if (!clubId) return <Feedback tone="warn">Club unavailable.</Feedback>;
+  const plans = plansRes.data ?? [];
+  const memberships = membershipsRes.data ?? [];
 
   return (
     <div className="stack">
       <div className="hero-block">
         <h1>Membership plans</h1>
         <p className="muted">
-          Benefit: discounted member ticket prices. Plan edits never rewrite existing entitlements.
+          {clubName ?? "Club"} — paid membership unlocks member ticket pricing.
         </p>
       </div>
-      {error && <Feedback tone="danger">{error}</Feedback>}
-      <div className="grid-2">
-        {plans.map((plan) => (
-          <article key={plan.id} className="panel stack">
-            <h2>{plan.name}</h2>
-            <p className="muted">{plan.description}</p>
-            <p>
-              <strong>₹{plan.dues_amount}</strong>{" "}
-              <span className="muted small">
-                {plan.duration_days ? `${plan.duration_days} days` : `until ${plan.fixed_expires_on}`}
-              </span>
-            </p>
-            <button className="btn" disabled={busyId === plan.id} onClick={() => void buy(plan.id)}>
-              {busyId === plan.id ? "Starting…" : "Purchase"}
-            </button>
-          </article>
-        ))}
-      </div>
-      {plans.length === 0 && <Empty>No active plans.</Empty>}
+      {(error || plansRes.error) && (
+        <Feedback tone="danger">{error ?? plansRes.error}</Feedback>
+      )}
+      <PageState
+        loading={plansRes.loading}
+        error={null}
+        empty={plans.length === 0}
+        emptyMessage="No active plans."
+      >
+        <div className="grid-2">
+          {plans.map((plan) => (
+            <article key={plan.id} className="panel stack">
+              <h2>{plan.name}</h2>
+              <p className="muted">{plan.description}</p>
+              <p>
+                <strong>₹{plan.dues_amount}</strong>{" "}
+                <span className="muted small">
+                  {plan.duration_days
+                    ? `${plan.duration_days} days`
+                    : plan.fixed_expires_on
+                      ? `until ${plan.fixed_expires_on}`
+                      : ""}
+                </span>
+              </p>
+              <button
+                className="btn"
+                disabled={busyId === plan.id}
+                onClick={() => void buy(plan.id)}
+              >
+                {busyId === plan.id ? "Starting…" : "Purchase"}
+              </button>
+            </article>
+          ))}
+        </div>
+      </PageState>
+
       {me && (
         <section className="panel stack">
           <h2>Your memberships</h2>
-          {memberships.length === 0 ? (
-            <Empty>No membership records yet.</Empty>
-          ) : (
+          <PageState
+            loading={membershipsRes.loading}
+            error={membershipsRes.error}
+            empty={memberships.length === 0}
+            emptyMessage="No membership records yet."
+          >
             <table>
               <thead>
                 <tr>
-                  <th>Status</th>
+                  <th>Plan</th>
+                  <th>State</th>
                   <th>Starts</th>
                   <th>Ends</th>
                 </tr>
@@ -111,8 +139,11 @@ export function MembershipsPage() {
               <tbody>
                 {memberships.map((m) => (
                   <tr key={m.id}>
+                    <td>{m.plan_name ?? "—"}</td>
                     <td>
-                      <span className={`badge ${m.status === "active" ? "" : "badge--warn"}`}>{m.status}</span>
+                      <span className={statusBadgeClass(m.effective_state ?? m.status)}>
+                        {m.effective_state ?? m.status}
+                      </span>
                     </td>
                     <td>{new Date(m.starts_at).toLocaleString()}</td>
                     <td>{new Date(m.ends_at).toLocaleString()}</td>
@@ -120,8 +151,10 @@ export function MembershipsPage() {
                 ))}
               </tbody>
             </table>
+          </PageState>
+          {memberships.length === 0 && !membershipsRes.loading && (
+            <Empty>No membership records yet.</Empty>
           )}
-          <Link to="/home">Member home</Link>
         </section>
       )}
     </div>

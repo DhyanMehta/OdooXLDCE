@@ -1,43 +1,48 @@
-import { useEffect, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import { Link } from "react-router-dom";
 
-import { Empty, Feedback, Spinner } from "../../components/ui/Feedback";
+import { Feedback, PageState, Spinner } from "../../components/ui/Feedback";
 import { useAuth } from "../../hooks/useAuth";
-import { api, ApiError } from "../../services/api";
-import type { Ticket } from "../../types/api";
-
+import { useAsyncResource } from "../../hooks/useAsyncResource";
+import { statusBadgeClass } from "../../lib/format";
+import { api } from "../../services/api";
 export function TicketsPage() {
   const { me, loading } = useAuth();
-  const [tickets, setTickets] = useState<Ticket[]>([]);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!me) return;
-    api
-      .get<Ticket[]>("/api/v1/me/tickets")
-      .then(setTickets)
-      .catch((err: unknown) => setError(err instanceof ApiError ? err.message : "Failed to load"));
-  }, [me]);
+  const ticketsRes = useAsyncResource(
+    me ? () => api.get("/api/v1/me/tickets") : null,
+    [me?.user.id],
+    { cacheKeys: ["tickets"] },
+  );
 
   if (loading) return <Spinner />;
-  if (!me) return <Feedback tone="warn">Please <Link to="/login">log in</Link>.</Feedback>;
-  if (error) return <Feedback tone="danger">{error}</Feedback>;
+  if (!me) {
+    return (
+      <Feedback tone="warn">
+        Please <Link to="/login?next=/tickets">log in</Link>.
+      </Feedback>
+    );
+  }
+
+  const tickets = ticketsRes.data ?? [];
 
   return (
     <div className="stack">
       <div className="hero-block">
         <h1>My tickets</h1>
+        <p className="muted">Show the QR code at check-in.</p>
       </div>
-      {tickets.length === 0 ? (
-        <Empty>No tickets issued.</Empty>
-      ) : (
+      <PageState
+        loading={ticketsRes.loading}
+        error={ticketsRes.error}
+        empty={tickets.length === 0}
+        emptyMessage="No tickets issued."
+      >
         <div className="grid-2">
           {tickets.map((ticket) => (
             <article key={ticket.id} className="panel stack">
               <div className="row" style={{ justifyContent: "space-between" }}>
                 <strong>{ticket.event_title ?? `Event ${ticket.event_id.slice(0, 8)}`}</strong>
-                <span className="badge">{ticket.status}</span>
+                <span className={statusBadgeClass(ticket.status)}>{ticket.status}</span>
               </div>
               <p className="muted small">{new Date(ticket.issued_at).toLocaleString()}</p>
               {ticket.qr_token ? (
@@ -58,7 +63,7 @@ export function TicketsPage() {
             </article>
           ))}
         </div>
-      )}
+      </PageState>
     </div>
   );
 }
