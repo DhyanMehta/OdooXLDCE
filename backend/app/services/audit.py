@@ -5,13 +5,13 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import AuditLog
 
 
-def record_audit(
-    db: Session,
+async def record_audit(
+    db: AsyncSession,
     *,
     club_id: uuid.UUID | None,
     actor_user_id: uuid.UUID | None,

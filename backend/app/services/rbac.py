@@ -1,21 +1,22 @@
-"""Club-scoped role resolution, assignment, and atomic handover."""
+"""Club-scoped role resolution, assignment, and atomic handover.
+
+Mutations serialize on a club-scoped advisory lock so concurrent end/handover
+cannot bypass last-administrator or overlap rules.
+"""
 
 from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import and_, or_, select
-from sqlalchemy.orm import Session
+from sqlalchemy import and_, or_, select, text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import AppError, ConflictError, ForbiddenError, NotFoundError
 from app.core.permissions import RoleCode, permissions_for_roles
+from app.core.time import utcnow
 from app.models import ClubMember, ClubRoleAssignment, Role, User
 from app.services.audit import record_audit
-
-
-def utcnow() -> datetime:
-    return datetime.now(timezone.utc)
 
 
 def _assignment_active_clause(at: datetime):
@@ -25,15 +26,23 @@ def _assignment_active_clause(at: datetime):
     )
 
 
-def effective_role_codes(
-    db: Session,
+async def lock_club_roles(db: AsyncSession, club_id: uuid.UUID) -> None:
+    """Serialize role mutations for one club (transaction-scoped advisory lock)."""
+    await db.execute(
+        text("SELECT pg_advisory_xact_lock(:k1, :k2)"),
+        {"k1": 904201, "k2": club_id.int % (2**31 - 1)},
+    )
+
+
+async def effective_role_codes(
+    db: AsyncSession,
     *,
     club_id: uuid.UUID,
     user_id: uuid.UUID,
     at: datetime | None = None,
 ) -> set[str]:
     moment = at or utcnow()
-    rows = db.execute(
+    result = await db.execute(
         select(Role.code)
         .join(ClubRoleAssignment, ClubRoleAssignment.role_id == Role.id)
         .where(
@@ -41,43 +50,45 @@ def effective_role_codes(
             ClubRoleAssignment.user_id == user_id,
             _assignment_active_clause(moment),
         )
-    ).scalars().all()
-    return set(rows)
+    )
+    return set(result.scalars().all())
 
 
-def effective_permissions(
-    db: Session,
+async def effective_permissions(
+    db: AsyncSession,
     *,
     club_id: uuid.UUID,
     user_id: uuid.UUID,
 ) -> list[str]:
-    return permissions_for_roles(effective_role_codes(db, club_id=club_id, user_id=user_id))
+    return permissions_for_roles(await effective_role_codes(db, club_id=club_id, user_id=user_id))
 
 
-def require_permission(
-    db: Session,
+async def require_permission(
+    db: AsyncSession,
     *,
     club_id: uuid.UUID,
     user_id: uuid.UUID,
     permission: str,
 ) -> None:
-    perms = effective_permissions(db, club_id=club_id, user_id=user_id)
+    perms = await effective_permissions(db, club_id=club_id, user_id=user_id)
     if permission not in perms:
         raise ForbiddenError("You do not have permission for this action.")
 
 
-def list_active_assignments(db: Session, *, club_id: uuid.UUID) -> list[ClubRoleAssignment]:
+async def list_active_assignments(db: AsyncSession, *, club_id: uuid.UUID) -> list[ClubRoleAssignment]:
     return list(
-        db.scalars(
-            select(ClubRoleAssignment)
-            .where(ClubRoleAssignment.club_id == club_id, _assignment_active_clause(utcnow()))
-            .order_by(ClubRoleAssignment.starts_at.desc())
+        (
+            await db.scalars(
+                select(ClubRoleAssignment)
+                .where(ClubRoleAssignment.club_id == club_id, _assignment_active_clause(utcnow()))
+                .order_by(ClubRoleAssignment.starts_at.desc())
+            )
         ).all()
     )
 
 
-def _has_overlapping_assignment(
-    db: Session,
+async def _has_overlapping_assignment(
+    db: AsyncSession,
     *,
     club_id: uuid.UUID,
     user_id: uuid.UUID,
@@ -86,50 +97,56 @@ def _has_overlapping_assignment(
     ends_at: datetime | None,
     exclude_id: uuid.UUID | None = None,
 ) -> bool:
-    rows = db.scalars(
-        select(ClubRoleAssignment).where(
-            ClubRoleAssignment.club_id == club_id,
-            ClubRoleAssignment.user_id == user_id,
-            ClubRoleAssignment.role_id == role_id,
+    rows = (
+        await db.scalars(
+            select(ClubRoleAssignment).where(
+                ClubRoleAssignment.club_id == club_id,
+                ClubRoleAssignment.user_id == user_id,
+                ClubRoleAssignment.role_id == role_id,
+            )
         )
     ).all()
     for row in rows:
         if exclude_id and row.id == exclude_id:
             continue
         row_end = row.ends_at
-        # Overlap if ranges intersect on the timeline.
-        if row_end is None:
-            if ends_at is None or ends_at > row.starts_at:
-                if starts_at < (ends_at or datetime.max.replace(tzinfo=timezone.utc)):
-                    if starts_at < (row_end or datetime.max.replace(tzinfo=timezone.utc)) and (
-                        ends_at is None or ends_at > row.starts_at
-                    ):
-                        return True
-        else:
-            open_end = ends_at is None
-            if starts_at < row_end and (open_end or ends_at > row.starts_at):
-                return True
+        open_end = ends_at is None
+        if starts_at < (row_end or datetime.max.replace(tzinfo=timezone.utc)) and (
+            open_end or (ends_at is not None and ends_at > row.starts_at)
+        ):
+            return True
     return False
 
 
-def count_active_admins(db: Session, *, club_id: uuid.UUID, at: datetime | None = None) -> int:
+async def count_active_admins(db: AsyncSession, *, club_id: uuid.UUID, at: datetime | None = None) -> int:
     moment = at or utcnow()
-    admin_role = db.scalar(select(Role).where(Role.code == RoleCode.CLUB_ADMIN.value))
+    admin_role = await db.scalar(select(Role).where(Role.code == RoleCode.CLUB_ADMIN.value))
     if admin_role is None:
         return 0
     return len(
-        db.scalars(
-            select(ClubRoleAssignment).where(
-                ClubRoleAssignment.club_id == club_id,
-                ClubRoleAssignment.role_id == admin_role.id,
-                _assignment_active_clause(moment),
+        (
+            await db.scalars(
+                select(ClubRoleAssignment).where(
+                    ClubRoleAssignment.club_id == club_id,
+                    ClubRoleAssignment.role_id == admin_role.id,
+                    _assignment_active_clause(moment),
+                )
             )
         ).all()
     )
 
 
-def assign_role(
-    db: Session,
+async def _require_eligible_assignee(db: AsyncSession, *, club_id: uuid.UUID, user_id: uuid.UUID) -> User:
+    user = await db.get(User, user_id)
+    if user is None or not user.is_active:
+        raise NotFoundError("User not found.")
+    if await db.scalar(select(ClubMember).where(ClubMember.club_id == club_id, ClubMember.user_id == user_id)) is None:
+        raise AppError("User must belong to the club before receiving a role.", code="not_club_member")
+    return user
+
+
+async def assign_role(
+    db: AsyncSession,
     *,
     club_id: uuid.UUID,
     actor_user_id: uuid.UUID,
@@ -139,22 +156,19 @@ def assign_role(
     ends_at: datetime | None = None,
 ) -> ClubRoleAssignment:
     if actor_user_id == target_user_id:
-        # Prevent privilege self-escalation via the assignment API.
         raise ForbiddenError("You cannot assign privileged roles to yourself.")
-    require_permission(db, club_id=club_id, user_id=actor_user_id, permission="manage_roles")
-    role = db.scalar(select(Role).where(Role.code == role_code))
+    await require_permission(db, club_id=club_id, user_id=actor_user_id, permission="manage_roles")
+    await lock_club_roles(db, club_id)
+
+    role = await db.scalar(select(Role).where(Role.code == role_code))
     if role is None:
         raise NotFoundError("Role not found.")
-    target = db.get(User, target_user_id)
-    if target is None:
-        raise NotFoundError("User not found.")
-    if db.scalar(select(ClubMember).where(ClubMember.club_id == club_id, ClubMember.user_id == target_user_id)) is None:
-        raise AppError("User must belong to the club before receiving a role.", code="not_club_member")
+    await _require_eligible_assignee(db, club_id=club_id, user_id=target_user_id)
 
     start = starts_at or utcnow()
     if ends_at is not None and ends_at <= start:
         raise AppError("Role end must be after start.")
-    if _has_overlapping_assignment(
+    if await _has_overlapping_assignment(
         db,
         club_id=club_id,
         user_id=target_user_id,
@@ -173,8 +187,8 @@ def assign_role(
         assigned_by_user_id=actor_user_id,
     )
     db.add(assignment)
-    db.flush()
-    record_audit(
+    await db.flush()
+    await record_audit(
         db,
         club_id=club_id,
         actor_user_id=actor_user_id,
@@ -186,28 +200,39 @@ def assign_role(
     return assignment
 
 
-def end_assignment(
-    db: Session,
+async def end_assignment(
+    db: AsyncSession,
     *,
     club_id: uuid.UUID,
     actor_user_id: uuid.UUID,
     assignment_id: uuid.UUID,
     ends_at: datetime | None = None,
 ) -> ClubRoleAssignment:
-    require_permission(db, club_id=club_id, user_id=actor_user_id, permission="manage_roles")
-    assignment = db.get(ClubRoleAssignment, assignment_id)
-    if assignment is None or assignment.club_id != club_id:
+    await require_permission(db, club_id=club_id, user_id=actor_user_id, permission="manage_roles")
+    await lock_club_roles(db, club_id)
+
+    assignment = await db.scalar(
+        select(ClubRoleAssignment)
+        .where(ClubRoleAssignment.id == assignment_id, ClubRoleAssignment.club_id == club_id)
+        .with_for_update()
+    )
+    if assignment is None:
         raise NotFoundError("Assignment not found.")
-    role = db.get(Role, assignment.role_id)
-    end = ends_at or utcnow()
-    if assignment.ends_at is not None and assignment.ends_at <= utcnow():
+    role = await db.get(Role, assignment.role_id)
+    now = utcnow()
+    if assignment.ends_at is not None and assignment.ends_at <= now:
         raise AppError("Assignment already ended.")
-    if role and role.code == RoleCode.CLUB_ADMIN.value:
-        # Keep at least one effective administrator for the club.
-        if count_active_admins(db, club_id=club_id) <= 1:
+    if assignment.starts_at > now:
+        # Ending a scheduled assignment is allowed; last-admin only applies when currently effective.
+        pass
+    elif role and role.code == RoleCode.CLUB_ADMIN.value:
+        if await count_active_admins(db, club_id=club_id) <= 1:
             raise ConflictError("Cannot remove the club's last effective administrator.")
+    end = ends_at or now
+    if end <= assignment.starts_at:
+        raise AppError("Role end must be after start.")
     assignment.ends_at = end
-    record_audit(
+    await record_audit(
         db,
         club_id=club_id,
         actor_user_id=actor_user_id,
@@ -219,8 +244,8 @@ def end_assignment(
     return assignment
 
 
-def handover_role(
-    db: Session,
+async def handover_role(
+    db: AsyncSession,
     *,
     club_id: uuid.UUID,
     actor_user_id: uuid.UUID,
@@ -228,22 +253,29 @@ def handover_role(
     incoming_user_id: uuid.UUID,
 ) -> tuple[ClubRoleAssignment, ClubRoleAssignment]:
     """Atomically end outgoing assignment and start incoming assignment."""
-    require_permission(db, club_id=club_id, user_id=actor_user_id, permission="manage_roles")
-    outgoing = db.get(ClubRoleAssignment, outgoing_assignment_id)
-    if outgoing is None or outgoing.club_id != club_id:
+    await require_permission(db, club_id=club_id, user_id=actor_user_id, permission="manage_roles")
+    await lock_club_roles(db, club_id)
+
+    outgoing = await db.scalar(
+        select(ClubRoleAssignment)
+        .where(ClubRoleAssignment.id == outgoing_assignment_id, ClubRoleAssignment.club_id == club_id)
+        .with_for_update()
+    )
+    if outgoing is None:
         raise NotFoundError("Outgoing assignment not found.")
-    role = db.get(Role, outgoing.role_id)
+    role = await db.get(Role, outgoing.role_id)
     if role is None:
         raise NotFoundError("Role not found.")
     if actor_user_id == incoming_user_id:
         raise ForbiddenError("You cannot assign privileged roles to yourself.")
+    await _require_eligible_assignee(db, club_id=club_id, user_id=incoming_user_id)
 
     now = utcnow()
-    if outgoing.ends_at is not None and outgoing.ends_at <= now:
-        raise AppError("Outgoing assignment is not active.")
+    if not (outgoing.starts_at <= now and (outgoing.ends_at is None or outgoing.ends_at > now)):
+        raise AppError("Outgoing assignment is not currently effective.")
 
     outgoing.ends_at = now
-    if _has_overlapping_assignment(
+    if await _has_overlapping_assignment(
         db,
         club_id=club_id,
         user_id=incoming_user_id,
@@ -254,6 +286,7 @@ def handover_role(
     ):
         raise ConflictError("Incoming user already has an overlapping assignment for this role.")
 
+    # After ending outgoing admin, ensure we still have an admin once incoming is created.
     incoming = ClubRoleAssignment(
         club_id=club_id,
         user_id=incoming_user_id,
@@ -263,8 +296,11 @@ def handover_role(
         assigned_by_user_id=actor_user_id,
     )
     db.add(incoming)
-    db.flush()
-    record_audit(
+    await db.flush()
+    if role.code == RoleCode.CLUB_ADMIN.value and await count_active_admins(db, club_id=club_id) < 1:
+        raise ConflictError("Club must retain an effective administrator.")
+
+    await record_audit(
         db,
         club_id=club_id,
         actor_user_id=actor_user_id,

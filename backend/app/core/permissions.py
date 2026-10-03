@@ -20,6 +20,14 @@ class Permission(StrEnum):
     MANAGE_MAILING_LIST = "manage_mailing_list"
     MANAGE_ROLES = "manage_roles"
     VIEW_AUDIT = "view_audit"
+    MANAGE_MERCHANDISE = "manage_merchandise"
+    FULFILL_MERCHANDISE = "fulfill_merchandise"
+    MANAGE_PROJECTS = "manage_projects"
+    REVIEW_EXPENSES = "review_expenses"
+    RECORD_REIMBURSEMENT = "record_reimbursement"
+    MANAGE_BUDGETS = "manage_budgets"
+    VIEW_FINANCE = "view_finance"
+    RECORD_REFUNDS = "record_refunds"
 
 
 class RoleCode(StrEnum):
@@ -27,6 +35,7 @@ class RoleCode(StrEnum):
     MEMBERSHIP_MANAGER = "membership_manager"
     EVENT_ORGANIZER = "event_organizer"
     COMMUNICATIONS_OFFICER = "communications_officer"
+    FINANCE_OFFICER = "finance_officer"
 
 
 ROLE_PERMISSIONS: dict[RoleCode, frozenset[Permission]] = {
@@ -43,12 +52,24 @@ ROLE_PERMISSIONS: dict[RoleCode, frozenset[Permission]] = {
             Permission.MANAGE_EVENTS,
             Permission.CHECK_IN,
             Permission.VIEW_ATTENDANCE,
+            Permission.MANAGE_MERCHANDISE,
+            Permission.FULFILL_MERCHANDISE,
+            Permission.MANAGE_PROJECTS,
         }
     ),
     RoleCode.COMMUNICATIONS_OFFICER: frozenset(
         {
             Permission.MANAGE_ANNOUNCEMENTS,
             Permission.MANAGE_MAILING_LIST,
+        }
+    ),
+    RoleCode.FINANCE_OFFICER: frozenset(
+        {
+            Permission.REVIEW_EXPENSES,
+            Permission.RECORD_REIMBURSEMENT,
+            Permission.MANAGE_BUDGETS,
+            Permission.VIEW_FINANCE,
+            Permission.RECORD_REFUNDS,
         }
     ),
 }
