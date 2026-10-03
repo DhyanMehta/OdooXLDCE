@@ -1,53 +1,37 @@
 # CampusOS Backend
 
-FastAPI API service for CampusOS (Phase 1: foundation + health endpoint only).
+FastAPI modular monolith for the four selected modules.
 
-## Stack
+## Auth
 
-- Python 3.11+
-- FastAPI + Uvicorn
-- Pydantic Settings
-- SQLAlchemy 2 (declarative `Base` ready for later models)
-- psycopg 3 driver string in `DATABASE_URL`
+- Argon2 password hashes (`pwdlib`)
+- Server-side sessions in `sessions` table
+- HttpOnly `campusos_session` cookie + `campusos_csrf` cookie
+- Mutating requests require header `X-CSRF-Token`
+- Permissions: `app/core/permissions.py`
 
-## Setup (PowerShell)
-
-From the repository root:
+## Setup
 
 ```powershell
 cd backend
 py -3.13 -m venv .venv
 .\.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
 pip install -e ".[dev]"
-Copy-Item .env.example .env
+Copy-Item .env.example .env   # then set DATABASE_URL
 ```
-
-> Keep the virtual environment at `backend/.venv` only.
 
 ## Run
 
 ```powershell
-cd backend
-.\.venv\Scripts\Activate.ps1
 uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+python -m app.seed
+python -m app.worker
 ```
-
-- Health: http://127.0.0.1:8000/api/v1/health
-- OpenAPI: http://127.0.0.1:8000/docs
-
-The health endpoint reports that the API process is running. It does **not** check PostgreSQL.
 
 ## Tests
 
 ```powershell
-cd backend
-.\.venv\Scripts\Activate.ps1
-pytest
+pytest -v
 ```
 
-## Environment
-
-See `.env.example`. `DATABASE_URL` must use the same user, password, and database name as `database/.env` (`POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`).
-
-Use the `postgresql+psycopg://` scheme for SQLAlchemy + psycopg 3.
+Creates/uses PostgreSQL database `campusos_test`.
