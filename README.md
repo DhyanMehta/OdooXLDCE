@@ -1,87 +1,117 @@
 # CampusOS
 
-Student Organization Management Platform — mentor-demo scope:
+Student organization management. Four modules only:
 
 1. Members & memberships  
 2. Events & ticketing  
 3. Announcements & public club site  
 4. Administration & permissions  
 
-## Stack
+## Layout
 
-- `frontend/` React + TypeScript + Vite (`5173`)
-- `backend/` FastAPI + SQLAlchemy 2 + session cookies (`8000`)
-- `database/` Alembic + PostgreSQL
+| Folder | Role |
+| --- | --- |
+| `frontend/` | React + TypeScript + Vite (`http://127.0.0.1:5173`) |
+| `backend/` | FastAPI + SQLAlchemy 2 (`http://127.0.0.1:8000`) |
+| `database/` | Alembic migrations + DB env / docs |
 
-## Auth model
+Dependencies:
 
-- Password hashing: Argon2 via `pwdlib`
-- HttpOnly session cookie + readable CSRF cookie
-- Mutating requests require `X-CSRF-Token`
-- Role→permission map lives only in `backend/app/core/permissions.py`
-- Frontend navigation is filtered from `/auth/me` permissions
+- Backend → `backend/pyproject.toml` (no `requirements.txt`)
+- Frontend → `frontend/package.json`
 
-## Quick start (PowerShell)
+## Auth (sessions)
+
+- Passwords: Argon2 (`pwdlib`)
+- Server-side rows in `sessions` (token stored as SHA-256 hash)
+- Cookie `campusos_session` — HttpOnly, SameSite=Lax
+- CSRF cookie `campusos_csrf` + header `X-CSRF-Token` on POST/PATCH/etc.
+- Roles → permissions only in `backend/app/core/permissions.py`
+- UI sidebar is filtered from `/api/v1/auth/me`
+
+## Setup (PowerShell)
+
+### 1) Database
+
+Use local PostgreSQL (pgAdmin). Create DB `campusos` if needed, then:
 
 ```powershell
-# 1) DB env (local Postgres / pgAdmin)
-# Ensure database/.env and backend/.env share the same DATABASE_URL
+Copy-Item database\.env.example database\.env
+Copy-Item backend\.env.example backend\.env
+```
 
-# 2) Migrate + seed
+Put the **same** `DATABASE_URL` in both `.env` files, for example:
+
+```text
+postgresql+psycopg://postgres:YOUR_PASSWORD@localhost:5432/campusos
+```
+
+### 2) Backend
+
+```powershell
 cd backend
+py -3.13 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -e ".[dev]"
 cd ..
 alembic -c database/alembic.ini upgrade head
 cd backend
 python -m app.seed
-
-# 3) API
 uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+```
 
-# 4) Worker (renewal reminders + simulated email)
+### 3) Notification worker (optional second terminal)
+
+```powershell
+cd backend
+.\.venv\Scripts\Activate.ps1
 python -m app.worker
+```
 
-# 5) Frontend (second terminal)
+### 4) Frontend
+
+```powershell
 cd frontend
+Copy-Item .env.example .env
 npm install
 npm run dev
 ```
+
+Open `http://127.0.0.1:5173` (match Vite host with CORS origins in `backend/.env`).
 
 ## Demo accounts
 
 Password for all: `Password123!`
 
-| Email | Role |
+| Email | Use for |
 | --- | --- |
-| `admin@techclub.edu` | Club administrator (Tech Club) |
-| `membership@techclub.edu` | Membership manager |
-| `events@techclub.edu` | Event organizer |
-| `comms@techclub.edu` | Communications officer |
-| `member@techclub.edu` | Ordinary member (active membership + ticket) |
+| `member@techclub.edu` | Membership, buy tickets, QR |
+| `admin@techclub.edu` | Full Admin sidebar |
+| `events@techclub.edu` | Events + check-in |
+| `comms@techclub.edu` | Announcements + mailing list |
+| `membership@techclub.edu` | Plans / members |
 | `expired@techclub.edu` | Expired membership |
 | `buyer@example.com` | Ordinary buyer |
-| `admin@artsclub.edu` | Admin of second club (authz isolation) |
+| `admin@artsclub.edu` | Second club (auth isolation) |
 
-Public club page: `/clubs/tech-club`
+Public club: `/clubs/tech-club`
 
-## Walkthrough
+## Mentor walkthrough
 
-1. Log in as `member@techclub.edu` → Member home shows validity.  
-2. Open Spring Hack Night → book **member** ticket → demo pay → My tickets QR.  
-3. Log in as `events@techclub.edu` → Check-in with QR token → second attempt rejected.  
-4. Log in as `comms@techclub.edu` → publish announcement → run worker → delivery `sent_simulated`.  
-5. Log in as `admin@techclub.edu` → Roles handover / Audit history.
+1. Login as **Member** → Home → Events → book member ticket → demo pay → My tickets → copy check-in code  
+2. Login as **Events** → Admin → Check-in → first OK, second rejected  
+3. Login as **Comms** → publish announcement → run worker → delivery `sent_simulated`  
+4. Login as **Admin** → Roles / Audit / Manage events (set prices, draft vs publish)
 
-## Where rules live
+## Where business rules live
 
-| Concern | Location |
+| Area | Code |
 | --- | --- |
 | Permissions | `backend/app/core/permissions.py`, `services/rbac.py` |
-| Membership dates / eligibility | `services/membership_service.py`, `membership_eligibility.py` |
-| Purchases / capacity locks | `services/purchase_service.py` |
+| Membership dates | `services/membership_service.py`, `membership_eligibility.py` |
+| Payments / capacity | `services/purchase_service.py` |
 | Check-in | `services/event_service.py` |
-| Announcements / mailing / reminders | `services/announcement_service.py`, `worker.py` |
+| Announcements / mail | `services/announcement_service.py`, `worker.py` |
 
 ## Tests
 
