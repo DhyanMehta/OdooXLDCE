@@ -7,9 +7,14 @@ from app.api.v1.endpoints import (
     auth,
     clubs,
     events,
+    expenses,
+    finance,
     health,
     memberships,
+    merchandise,
     orders,
+    projects,
+    refunds,
     roles,
 )
 
@@ -22,3 +27,8 @@ api_router.include_router(orders.router)
 api_router.include_router(events.router)
 api_router.include_router(announcements.router)
 api_router.include_router(roles.router)
+api_router.include_router(merchandise.router)
+api_router.include_router(projects.router)
+api_router.include_router(expenses.router)
+api_router.include_router(refunds.router)
+api_router.include_router(finance.router)
