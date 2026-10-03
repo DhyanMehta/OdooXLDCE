@@ -1,79 +1,89 @@
 # CampusOS Database
 
-PostgreSQL infrastructure, Alembic migrations, and future seeds/scripts.
+PostgreSQL + Alembic for the four selected modules.
 
-Phase 1 includes migration tooling only — **no business schema migrations yet**.
+## Current schema
 
-## Credential correspondence
+Migration: `migrations/versions/538fc085a8ba_campusos_core_schema.py`
 
-| Source | Variables |
+| Area | Tables |
 | --- | --- |
-| `database/.env` | `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, `DATABASE_URL` |
-| `backend/.env` | `DATABASE_URL` (same user/password/db) |
+| Identity / auth | `users`, `sessions`, `clubs`, `club_members`, `roles`, `club_role_assignments`, `audit_logs` |
+| Membership | `membership_plans`, `memberships` |
+| Checkout | `orders`, `order_items`, `payments`, `payment_events` |
+| Events | `events`, `ticket_types`, `ticket_prices`, `tickets`, `ticket_checkins` |
+| Comms | `announcements`, `mailing_list_subscriptions`, `notification_deliveries` |
 
-Example:
+Design rules:
 
-```
-POSTGRES_USER=campusos
-POSTGRES_PASSWORD=campusos_dev
+- `club_members` = affiliation; `memberships` = paid entitlement (separate)
+- Roles hang off club affiliation, not off buying a plan
+- Order items snapshot unit price; membership quantity must be `1`
+- Ticket QR: hash for check-in (+ sealed value for owner re-display)
+- Duplicate check-in blocked by unique `ticket_id` on `ticket_checkins`
+- No merchandise / inventory / ledger tables in this demo
+
+## Credentials
+
+Keep these aligned:
+
+| File | Fields |
+| --- | --- |
+| `database/.env` | `POSTGRES_*` (Compose) + `DATABASE_URL` (Alembic) |
+| `backend/.env` | `DATABASE_URL` (same user / password / db) |
+
+Example shape (change password to yours):
+
+```text
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=YOUR_PASSWORD
 POSTGRES_DB=campusos
-DATABASE_URL=postgresql+psycopg://campusos:campusos_dev@localhost:5432/campusos
+DATABASE_URL=postgresql+psycopg://postgres:YOUR_PASSWORD@localhost:5432/campusos
 ```
 
-## Option A — Docker Compose (recommended for the hackathon)
+This team uses **local PostgreSQL 18 + pgAdmin 4** (not Docker) for day-to-day work.
 
-From the repository root:
+## Local PostgreSQL / pgAdmin
+
+1. Create database `campusos` (owner can be `postgres` or a dedicated role).
+2. Copy `.env.example` → `.env` and set matching credentials.
+3. In pgAdmin: host `127.0.0.1`, port `5432`, database `campusos`.
+
+Optional Docker (Compose file at repo root) if you prefer containers:
 
 ```powershell
 Copy-Item database\.env.example database\.env
-docker compose config
 docker compose up -d
-docker compose ps
 ```
 
-PostgreSQL listens on `127.0.0.1:5432` with a named volume `campusos_pgdata`.
+## Alembic (from repo root)
 
-## Option B — Existing local PostgreSQL
-
-1. Create a role and database that match `database/.env` / `backend/.env`.
-2. Skip Docker Compose.
-3. Point both `DATABASE_URL` values at your local instance.
-
-Example with `psql` (adjust for your superuser):
-
-```powershell
-psql -U postgres -c "CREATE USER campusos WITH PASSWORD 'campusos_dev';"
-psql -U postgres -c "CREATE DATABASE campusos OWNER campusos;"
-```
-
-## pgAdmin 4
-
-Use your existing pgAdmin 4 installation (not managed by this repo):
-
-1. Register a server → Host `127.0.0.1`, Port `5432`.
-2. Username / password / database from `database/.env`.
-3. Maintenance DB can be `postgres` or `campusos`.
-
-## Alembic (from repository root)
-
-Requires the backend editable install so `app.db.base.Base` is importable:
+Needs backend editable install so `app` models import:
 
 ```powershell
 cd backend
 .\.venv\Scripts\Activate.ps1
 cd ..
-Copy-Item database\.env.example database\.env
-alembic -c database/alembic.ini history
+alembic -c database/alembic.ini upgrade head
 alembic -c database/alembic.ini current
 ```
 
-Future workflow (do not run for business tables in Phase 1):
+New revision later:
 
 ```powershell
 alembic -c database/alembic.ini revision --autogenerate -m "describe_change"
 alembic -c database/alembic.ini upgrade head
 ```
 
-## Seeds / scripts
+## Seed data
 
-`seeds/` and `scripts/` are reserved for later phases. No sample business data is included in Phase 1.
+Demo clubs, users, plans, events, tickets, announcements:
+
+```powershell
+cd backend
+.\.venv\Scripts\Activate.ps1
+python -m app.seed
+```
+
+Password for seeded users: `Password123!`  
+See root `README.md` for the account table.
