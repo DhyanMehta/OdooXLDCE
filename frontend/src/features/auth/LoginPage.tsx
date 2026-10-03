@@ -1,26 +1,38 @@
 import { useState, type FormEvent } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 
 import { Feedback } from "../../components/ui/Feedback";
 import { useAuth } from "../../hooks/useAuth";
-import { ApiError } from "../../services/api";
+import { safeNextPath } from "../../lib/format";
+import { ApiError, formatApiError } from "../../services/api";
+
+const QUICK_ACCOUNTS = [
+  { email: "member@techclub.edu", label: "Member" },
+  { email: "admin@techclub.edu", label: "Admin" },
+  { email: "events@techclub.edu", label: "Events" },
+  { email: "comms@techclub.edu", label: "Comms" },
+];
 
 export function LoginPage() {
-  const { login, register } = useAuth();
+  const { login, register, me } = useAuth();
   const navigate = useNavigate();
+  const [params] = useSearchParams();
+  const next = safeNextPath(params.get("next"));
+
   const [mode, setMode] = useState<"login" | "register">("login");
-  const [email, setEmail] = useState("member@techclub.edu");
-  const [password, setPassword] = useState("Password123!");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [fullName, setFullName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const quickAccounts = [
-    { email: "member@techclub.edu", label: "Member" },
-    { email: "admin@techclub.edu", label: "Admin" },
-    { email: "events@techclub.edu", label: "Events" },
-    { email: "comms@techclub.edu", label: "Comms" },
-  ];
+  if (me) {
+    return (
+      <Feedback tone="ok">
+        You are already signed in. <Link to={next}>Continue</Link>
+      </Feedback>
+    );
+  }
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -29,9 +41,13 @@ export function LoginPage() {
     try {
       if (mode === "login") await login(email, password);
       else await register(email, password, fullName);
-      navigate("/home");
+      navigate(next);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Authentication failed");
+      if (err instanceof ApiError && err.status === 401) {
+        setError("Invalid email or password.");
+      } else {
+        setError(formatApiError(err));
+      }
     } finally {
       setBusy(false);
     }
@@ -41,7 +57,28 @@ export function LoginPage() {
     <section className="stack" style={{ maxWidth: 480 }}>
       <div className="hero-block">
         <h1>{mode === "login" ? "Log in" : "Create account"}</h1>
+        <p className="muted">
+          {mode === "login" ? "Sign in to manage memberships and tickets." : "Register to join clubs."}
+        </p>
       </div>
+
+      <div className="row">
+        <button
+          type="button"
+          className={`btn ${mode === "login" ? "" : "btn--ghost"}`}
+          onClick={() => setMode("login")}
+        >
+          Log in
+        </button>
+        <button
+          type="button"
+          className={`btn ${mode === "register" ? "" : "btn--ghost"}`}
+          onClick={() => setMode("register")}
+        >
+          Register
+        </button>
+      </div>
+
       <form className="panel form" onSubmit={onSubmit}>
         {mode === "register" && (
           <label>
@@ -68,29 +105,27 @@ export function LoginPage() {
           {busy ? "Working…" : mode === "login" ? "Log in" : "Register"}
         </button>
       </form>
-      <div className="row">
-        {quickAccounts.map((account) => (
-          <button
-            key={account.email}
-            type="button"
-            className="btn btn--ghost"
-            onClick={() => {
-              setMode("login");
-              setEmail(account.email);
-              setPassword("Password123!");
-            }}
-          >
-            {account.label}
-          </button>
-        ))}
-      </div>
-      <button
-        type="button"
-        className="btn btn--ghost"
-        onClick={() => setMode(mode === "login" ? "register" : "login")}
-      >
-        {mode === "login" ? "Need an account? Register" : "Back to login"}
-      </button>
+
+      {mode === "login" && (
+        <div className="panel stack">
+          <p className="muted small">Optional demo quick-fill (seed accounts):</p>
+          <div className="row">
+            {QUICK_ACCOUNTS.map((account) => (
+              <button
+                key={account.email}
+                type="button"
+                className="btn btn--ghost"
+                onClick={() => {
+                  setEmail(account.email);
+                  setPassword("Password123!");
+                }}
+              >
+                {account.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
     </section>
   );
 }

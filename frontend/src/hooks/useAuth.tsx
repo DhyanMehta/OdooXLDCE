@@ -8,37 +8,57 @@ import {
   type ReactNode,
 } from "react";
 
-import { api } from "../services/api";
+import { clubKey, invalidate } from "../lib/queryCache";
+import { api, ApiError } from "../services/api";
 import type { ClubContext, Me } from "../types/api";
 
 type AuthState = {
   me: Me | null;
   loading: boolean;
-  refresh: () => Promise<void>;
-  login: (email: string, password: string) => Promise<void>;
-  register: (email: string, password: string, fullName: string) => Promise<void>;
+  refresh: () => Promise<Me | null>;
+  login: (email: string, password: string) => Promise<Me>;
+  register: (email: string, password: string, fullName: string) => Promise<Me>;
   logout: () => Promise<void>;
+  updateProfile: (body: {
+    full_name?: string;
+    email?: string;
+    current_password?: string;
+    new_password?: string;
+  }) => Promise<Me>;
   activeClub: ClubContext | null;
   setActiveClubId: (clubId: string) => void;
   hasPermission: (permission: string) => boolean;
+  /** Permissions for a specific club (e.g. event's club), not the sidebar selection. */
+  hasPermissionForClub: (clubId: string, permission: string) => boolean;
+  clubContext: (clubId: string) => ClubContext | null;
 };
 
 const AuthContext = createContext<AuthState | null>(null);
+const ACTIVE_KEY = "campusos.activeClubId";
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [me, setMe] = useState<Me | null>(null);
   const [loading, setLoading] = useState(true);
-  const [activeClubId, setActiveClubId] = useState<string | null>(
-    localStorage.getItem("campusos.activeClubId"),
+  const [activeClubId, setActiveClubIdState] = useState<string | null>(() =>
+    localStorage.getItem(ACTIVE_KEY),
   );
 
   const refresh = useCallback(async () => {
     try {
-      const data = await api.get<Me>("/api/v1/auth/me");
+      const data = await api.get("/api/v1/auth/me");
       setMe(data);
-      setActiveClubId((current) => current ?? data.clubs[0]?.club.id ?? null);
-    } catch {
-      setMe(null);
+      setActiveClubIdState((current) => {
+        if (current && data.clubs.some((c) => c.club.id === current)) return current;
+        return data.clubs[0]?.club.id ?? null;
+      });
+      return data;
+    } catch (err) {
+      if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
+        setMe(null);
+      } else {
+        setMe(null);
+      }
+      return null;
     } finally {
       setLoading(false);
     }
@@ -49,8 +69,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [refresh]);
 
   useEffect(() => {
-    if (activeClubId) localStorage.setItem("campusos.activeClubId", activeClubId);
+    if (activeClubId) localStorage.setItem(ACTIVE_KEY, activeClubId);
   }, [activeClubId]);
+
+  const setActiveClubId = useCallback((clubId: string) => {
+    setActiveClubIdState((prev) => {
+      if (prev && prev !== clubId) {
+        invalidate(clubKey(prev, "*"), clubKey(clubId, "*"), "me");
+      }
+      return clubId;
+    });
+  }, []);
 
   const activeClub = useMemo(() => {
     if (!me) return null;
@@ -63,27 +92,50 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       loading,
       refresh,
       login: async (email, password) => {
-        const data = await api.post<Me>("/api/v1/auth/login", { email, password });
+        const data = await api.post("/api/v1/auth/login", { body: { email, password } });
         setMe(data);
+        setActiveClubIdState((current) => {
+          if (current && data.clubs.some((c) => c.club.id === current)) return current;
+          return data.clubs[0]?.club.id ?? null;
+        });
+        invalidate("me");
+        return data;
       },
       register: async (email, password, fullName) => {
-        const data = await api.post<Me>("/api/v1/auth/register", {
-          email,
-          password,
-          full_name: fullName,
+        const data = await api.post("/api/v1/auth/register", {
+          body: { email, password, full_name: fullName },
         });
         setMe(data);
+        setActiveClubIdState(data.clubs[0]?.club.id ?? null);
+        invalidate("me");
+        return data;
       },
       logout: async () => {
-        await api.post("/api/v1/auth/logout");
+        try {
+          await api.post("/api/v1/auth/logout");
+        } catch {
+          /* session may already be gone */
+        }
         setMe(null);
+        invalidate("me");
+      },
+      updateProfile: async (body) => {
+        const data = await api.patch("/api/v1/auth/me", { body });
+        setMe(data);
+        invalidate("me");
+        return data;
       },
       activeClub,
-      setActiveClubId: (clubId: string) => setActiveClubId(clubId),
+      setActiveClubId,
       hasPermission: (permission: string) =>
         Boolean(activeClub?.permissions.includes(permission)),
+      hasPermissionForClub: (clubId: string, permission: string) => {
+        const ctx = me?.clubs.find((c) => c.club.id === clubId);
+        return Boolean(ctx?.permissions.includes(permission));
+      },
+      clubContext: (clubId: string) => me?.clubs.find((c) => c.club.id === clubId) ?? null,
     }),
-    [me, loading, refresh, activeClub],
+    [me, loading, refresh, activeClub, setActiveClubId],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

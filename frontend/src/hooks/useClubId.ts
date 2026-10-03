@@ -1,34 +1,15 @@
-import { useEffect, useState } from "react";
-
-import { api } from "../services/api";
-import type { ClubContext } from "../types/api";
 import { useAuth } from "./useAuth";
 
-/** Prefer auth active club; otherwise resolve public tech-club for browsing. */
-export function useClubId(): { clubId: string | null; clubName: string | null; loading: boolean } {
+/**
+ * Authenticated club context only — no hardcoded tech-club fallback.
+ * Public pages should use the club id/slug from the route instead.
+ */
+export function useClubId(): string | null {
   const { activeClub } = useAuth();
-  const [fallback, setFallback] = useState<ClubContext | null>(null);
-  const [loading, setLoading] = useState(!activeClub);
+  return activeClub?.club.id ?? null;
+}
 
-  useEffect(() => {
-    if (activeClub) {
-      setLoading(false);
-      return;
-    }
-    let cancelled = false;
-    api
-      .get<ClubContext>("/api/v1/clubs/by-slug/tech-club")
-      .then((ctx) => {
-        if (!cancelled) setFallback(ctx);
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [activeClub]);
-
-  const club = activeClub ?? fallback;
-  return { clubId: club?.club.id ?? null, clubName: club?.club.name ?? null, loading };
+export function useActiveClubSlug(): string | null {
+  const { activeClub } = useAuth();
+  return activeClub?.club.slug ?? null;
 }
