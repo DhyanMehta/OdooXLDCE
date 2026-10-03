@@ -1,122 +1,94 @@
 # CampusOS
 
-Student Organization Management Platform — 36-hour hackathon foundation (Phase 1).
+Student Organization Management Platform — mentor-demo scope:
 
-Phase 1 delivers a runnable skeleton only: React frontend, FastAPI health API, PostgreSQL via Compose, and Alembic wiring. No business modules, auth, or sample domain data yet.
+1. Members & memberships  
+2. Events & ticketing  
+3. Announcements & public club site  
+4. Administration & permissions  
 
-## Repository layout
+## Stack
 
-```
-frontend/     React + TypeScript + Vite (port 5173)
-backend/      FastAPI + SQLAlchemy 2 Base (port 8000)
-database/     Alembic + Compose env + seeds/scripts placeholders
-compose.yaml  PostgreSQL 16 only
-```
+- `frontend/` React + TypeScript + Vite (`5173`)
+- `backend/` FastAPI + SQLAlchemy 2 + session cookies (`8000`)
+- `database/` Alembic + PostgreSQL
 
-## Assumptions (Phase 1)
+## Auth model
 
-- Python **3.11+** (validated with 3.13 via `py -3.13` on Windows).
-- Frontend package manager is **npm** with `package-lock.json`.
-- Backend uses a **synchronous** SQLAlchemy stack later; health is process-liveness only.
-- `DATABASE_URL` uses the **psycopg 3** scheme: `postgresql+psycopg://...`.
-- pgAdmin 4 is an existing local install and is not containerized here.
-- Default local credentials (examples only): user `campusos`, password `campusos_dev`, database `campusos`.
-
-## Credential correspondence
-
-| File | Role |
-| --- | --- |
-| `database/.env` | Compose `POSTGRES_*` + Alembic `DATABASE_URL` |
-| `backend/.env` | API `DATABASE_URL` (same user/password/db) |
-| `frontend/.env` | `VITE_API_BASE_URL` → API origin |
-
-Example:
-
-```
-POSTGRES_USER=campusos
-POSTGRES_PASSWORD=campusos_dev
-POSTGRES_DB=campusos
-DATABASE_URL=postgresql+psycopg://campusos:campusos_dev@localhost:5432/campusos
-VITE_API_BASE_URL=http://127.0.0.1:8000
-```
+- Password hashing: Argon2 via `pwdlib`
+- HttpOnly session cookie + readable CSRF cookie
+- Mutating requests require `X-CSRF-Token`
+- Role→permission map lives only in `backend/app/core/permissions.py`
+- Frontend navigation is filtered from `/auth/me` permissions
 
 ## Quick start (PowerShell)
 
-### 1) PostgreSQL (Docker)
-
 ```powershell
-Copy-Item database\.env.example database\.env
-docker compose config
-docker compose up -d
-docker compose ps
-```
+# 1) DB env (local Postgres / pgAdmin)
+# Ensure database/.env and backend/.env share the same DATABASE_URL
 
-### 2) PostgreSQL (existing local install)
-
-Skip Compose. Create a matching role/database, then use the same `DATABASE_URL` in `database/.env` and `backend/.env`. Connect with pgAdmin 4 to host `127.0.0.1`, port `5432`.
-
-### 3) Backend
-
-```powershell
+# 2) Migrate + seed
 cd backend
-py -3.13 -m venv .venv
 .\.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
 pip install -e ".[dev]"
-Copy-Item .env.example .env
+cd ..
+alembic -c database/alembic.ini upgrade head
+cd backend
+python -m app.seed
+
+# 3) API
 uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
-```
 
-Health: http://127.0.0.1:8000/api/v1/health
+# 4) Worker (renewal reminders + simulated email)
+python -m app.worker
 
-### 4) Frontend
-
-```powershell
+# 5) Frontend (second terminal)
 cd frontend
-Copy-Item .env.example .env
 npm install
 npm run dev
 ```
 
-App: http://127.0.0.1:5173
+## Demo accounts
 
-### 5) Tests & checks
+Password for all: `Password123!`
+
+| Email | Role |
+| --- | --- |
+| `admin@techclub.edu` | Club administrator (Tech Club) |
+| `membership@techclub.edu` | Membership manager |
+| `events@techclub.edu` | Event organizer |
+| `comms@techclub.edu` | Communications officer |
+| `member@techclub.edu` | Ordinary member (active membership + ticket) |
+| `expired@techclub.edu` | Expired membership |
+| `buyer@example.com` | Ordinary buyer |
+| `admin@artsclub.edu` | Admin of second club (authz isolation) |
+
+Public club page: `/clubs/tech-club`
+
+## Walkthrough
+
+1. Log in as `member@techclub.edu` → Member home shows validity.  
+2. Open Spring Hack Night → book **member** ticket → demo pay → My tickets QR.  
+3. Log in as `events@techclub.edu` → Check-in with QR token → second attempt rejected.  
+4. Log in as `comms@techclub.edu` → publish announcement → run worker → delivery `sent_simulated`.  
+5. Log in as `admin@techclub.edu` → Roles handover / Audit history.
+
+## Where rules live
+
+| Concern | Location |
+| --- | --- |
+| Permissions | `backend/app/core/permissions.py`, `services/rbac.py` |
+| Membership dates / eligibility | `services/membership_service.py`, `membership_eligibility.py` |
+| Purchases / capacity locks | `services/purchase_service.py` |
+| Check-in | `services/event_service.py` |
+| Announcements / mailing / reminders | `services/announcement_service.py`, `worker.py` |
+
+## Tests
 
 ```powershell
-# Frontend
-cd frontend
-npm run typecheck
-npm run lint
-npm run build
-
-# Backend
 cd backend
 .\.venv\Scripts\Activate.ps1
-pytest
-
-# Alembic import/config validation (no business migrations in Phase 1)
-cd <repo-root>
-.\backend\.venv\Scripts\Activate.ps1
-alembic -c database/alembic.ini history
-alembic -c database/alembic.ini current
+pytest -v
 ```
 
-### Future migrations
-
-After models exist:
-
-```powershell
-.\backend\.venv\Scripts\Activate.ps1
-alembic -c database/alembic.ini revision --autogenerate -m "describe_change"
-alembic -c database/alembic.ini upgrade head
-```
-
-## pgAdmin 4
-
-1. Open your existing pgAdmin 4.
-2. Register server → Host `127.0.0.1`, Port `5432`.
-3. Use credentials from `database/.env`.
-
-## Phase boundary
-
-Stop here for Phase 1. Do not add authentication, business tables, fabricated domain endpoints, or seed business data until later phases.
+Uses PostgreSQL database `campusos_test`.
