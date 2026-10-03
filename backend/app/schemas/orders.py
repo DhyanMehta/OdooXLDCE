@@ -34,6 +34,8 @@ class OrderItemOut(ORMModel):
     title_snapshot: str
     membership_plan_id: UUID | None
     ticket_price_id: UUID | None
+    product_variant_id: UUID | None = None
+    fulfillment_status: str | None = None
 
 
 class PaymentOut(ORMModel):
@@ -43,6 +45,7 @@ class PaymentOut(ORMModel):
     status: str
     provider_ref: str | None
     confirmed_at: datetime | None
+    confirmed_by_user_id: UUID | None = None
 
 
 class OrderOut(ORMModel):
@@ -56,3 +59,13 @@ class OrderOut(ORMModel):
     created_at: datetime
     items: list[OrderItemOut] = []
     payments: list[PaymentOut] = []
+    # Staff pending-dues enrichment (optional).
+    buyer_email: str | None = None
+    buyer_name: str | None = None
+
+
+class OrderPageOut(BaseModel):
+    items: list[OrderOut]
+    total: int
+    limit: int
+    offset: int

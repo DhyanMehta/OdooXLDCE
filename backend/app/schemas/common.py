@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from datetime import datetime
-from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
@@ -15,10 +13,28 @@ class MessageOut(BaseModel):
     message: str
 
 
-class ErrorOut(BaseModel):
+class AppErrorOut(BaseModel):
+    """Shape returned by AppError / IntegrityError / rate-limit handlers."""
+
     code: str
     message: str
-    details: dict[str, Any] | None = None
+
+
+class ValidationErrorOut(BaseModel):
+    """Shape returned by the RequestValidationError handler."""
+
+    code: str
+    message: str
+    fields: dict[str, str] = Field(default_factory=dict)
+
+
+# Back-compat alias used by OpenAPI docs; matches AppError JSON.
+ErrorOut = AppErrorOut
+
+
+class HealthOut(BaseModel):
+    status: str
+    service: str
 
 
 class UserOut(ORMModel):

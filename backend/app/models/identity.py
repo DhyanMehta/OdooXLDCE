@@ -7,6 +7,7 @@ from datetime import datetime
 
 from sqlalchemy import (
     Boolean,
+    CheckConstraint,
     DateTime,
     ForeignKey,
     String,
@@ -88,6 +89,12 @@ class Role(Base, UUIDPrimaryKeyMixin):
 
 class ClubRoleAssignment(Base, UUIDPrimaryKeyMixin):
     __tablename__ = "club_role_assignments"
+    __table_args__ = (
+        CheckConstraint(
+            "ends_at IS NULL OR ends_at > starts_at",
+            name="ck_club_role_assignments_period",
+        ),
+    )
 
     club_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("clubs.id", ondelete="CASCADE"), nullable=False, index=True

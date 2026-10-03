@@ -2,30 +2,41 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends
-from sqlalchemy import select
-from sqlalchemy.orm import Session, joinedload
+from fastapi import APIRouter, Depends, Query
+from fastapi.responses import JSONResponse
+from sqlalchemy import or_, select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import joinedload
 
 from app.core.errors import ForbiddenError, NotFoundError
 from app.core.tokens import unseal_token
 from app.db.session import get_db
 from app.dependencies.auth import AuthContext, get_club, get_current_auth, get_optional_auth, require_csrf
-from app.models import Club, Event, Ticket, TicketType
+from app.models import Club, Event, Ticket, TicketCheckin, TicketType, User
 from app.schemas.events import (
+    AffectedBookingOut,
+    AttendanceOut,
+    AttendeeTicketOut,
     CheckInIn,
+    CheckInListItem,
+    CheckInOut,
+    EventCreateIn,
     EventIn,
     EventOut,
     EventStatusIn,
+    EventStatusOut,
     TicketOut,
     TicketTypeIn,
     TicketTypeOut,
+    TicketTypePatch,
 )
 from app.services.event_service import (
     attendance_report,
     check_in_ticket,
-    create_event,
+    create_event_bundle,
     set_event_status,
     update_event,
+    update_ticket_type,
     upsert_ticket_type,
 )
 from app.services.purchase_service import count_event_commitments
@@ -34,17 +45,27 @@ from app.services.rbac import require_permission
 router = APIRouter(tags=["events"])
 
 
-def _event_out(db: Session, event: Event) -> EventOut:
-    remaining = max(event.capacity - count_event_commitments(db, event_id=event.id), 0)
+async def _event_out(db: AsyncSession, event: Event) -> EventOut:
+    remaining = max(event.capacity - await count_event_commitments(db, event_id=event.id), 0)
     data = EventOut.model_validate(event)
     data.seats_remaining = remaining
     return data
 
 
+async def _can_manage_events(db: AsyncSession, club_id: uuid.UUID, auth: AuthContext | None) -> bool:
+    if auth is None:
+        return False
+    try:
+        await require_permission(db, club_id=club_id, user_id=auth.user.id, permission="manage_events")
+        return True
+    except ForbiddenError:
+        return False
+
+
 @router.get("/clubs/{club_id}/events", response_model=list[EventOut])
-def list_events(
+async def list_events(
     club: Club = Depends(get_club),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     auth: AuthContext | None = Depends(get_optional_auth),
 ) -> list[EventOut]:
     stmt = (
@@ -53,106 +74,121 @@ def list_events(
         .where(Event.club_id == club.id)
         .order_by(Event.starts_at.asc())
     )
-    can_manage = False
-    if auth:
-        try:
-            require_permission(db, club_id=club.id, user_id=auth.user.id, permission="manage_events")
-            can_manage = True
-        except ForbiddenError:
-            can_manage = False
-    if not can_manage:
+    if not await _can_manage_events(db, club.id, auth):
         stmt = stmt.where(Event.status == "published")
-    events = db.scalars(stmt).unique().all()
-    return [_event_out(db, e) for e in events]
+    events = (await db.scalars(stmt)).unique().all()
+    return [await _event_out(db, e) for e in events]
 
 
 @router.get("/clubs/{club_id}/events/{event_id}", response_model=EventOut)
-def get_event(
+async def get_event(
     event_id: uuid.UUID,
     club: Club = Depends(get_club),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
+    auth: AuthContext | None = Depends(get_optional_auth),
 ) -> EventOut:
-    event = db.scalar(
-        select(Event)
-        .options(joinedload(Event.ticket_types).joinedload(TicketType.prices))
-        .where(Event.id == event_id, Event.club_id == club.id)
-    )
-    if event is None or event.status == "draft":
-        # Public detail hides drafts.
-        if event is None or event.status != "published":
-            raise NotFoundError("Event not found.")
-    return _event_out(db, event)
+    event = (
+        await db.scalars(
+            select(Event)
+            .options(joinedload(Event.ticket_types).joinedload(TicketType.prices))
+            .where(Event.id == event_id, Event.club_id == club.id)
+        )
+    ).unique().first()
+    if event is None:
+        raise NotFoundError("Event not found.")
+    if event.status != "published" and not await _can_manage_events(db, club.id, auth):
+        raise NotFoundError("Event not found.")
+    return await _event_out(db, event)
 
 
 @router.post("/clubs/{club_id}/events", response_model=EventOut)
-def create_event_endpoint(
-    payload: EventIn,
+async def create_event_endpoint(
+    payload: EventCreateIn,
     club: Club = Depends(get_club),
     auth: AuthContext = Depends(require_csrf),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ) -> EventOut:
-    event = create_event(db, club_id=club.id, actor_user_id=auth.user.id, **payload.model_dump())
-    db.commit()
-    event = db.scalar(
-        select(Event)
-        .options(joinedload(Event.ticket_types).joinedload(TicketType.prices))
-        .where(Event.id == event.id)
+    data = payload.model_dump()
+    ticket_types = data.pop("ticket_types")
+    publish = data.pop("publish")
+    event = await create_event_bundle(
+        db,
+        club_id=club.id,
+        actor_user_id=auth.user.id,
+        event_fields=data,
+        ticket_types=ticket_types,
+        publish=bool(publish),
     )
-    assert event is not None
-    return _event_out(db, event)
+    await db.commit()
+    loaded = (
+        await db.scalars(
+            select(Event)
+            .options(joinedload(Event.ticket_types).joinedload(TicketType.prices))
+            .where(Event.id == event.id)
+        )
+    ).unique().first()
+    assert loaded is not None
+    return await _event_out(db, loaded)
 
 
 @router.patch("/clubs/{club_id}/events/{event_id}", response_model=EventOut)
-def patch_event(
+async def patch_event(
     event_id: uuid.UUID,
     payload: EventIn,
     club: Club = Depends(get_club),
     auth: AuthContext = Depends(require_csrf),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ) -> EventOut:
-    event = update_event(
+    event = await update_event(
         db, club_id=club.id, actor_user_id=auth.user.id, event_id=event_id, **payload.model_dump()
     )
-    db.commit()
-    loaded = db.scalar(
-        select(Event)
-        .options(joinedload(Event.ticket_types).joinedload(TicketType.prices))
-        .where(Event.id == event.id)
-    )
+    await db.commit()
+    loaded = (
+        await db.scalars(
+            select(Event)
+            .options(joinedload(Event.ticket_types).joinedload(TicketType.prices))
+            .where(Event.id == event.id)
+        )
+    ).unique().first()
     assert loaded is not None
-    return _event_out(db, loaded)
+    return await _event_out(db, loaded)
 
 
-@router.post("/clubs/{club_id}/events/{event_id}/status", response_model=EventOut)
-def change_status(
+@router.post("/clubs/{club_id}/events/{event_id}/status", response_model=EventStatusOut)
+async def change_status(
     event_id: uuid.UUID,
     payload: EventStatusIn,
     club: Club = Depends(get_club),
     auth: AuthContext = Depends(require_csrf),
-    db: Session = Depends(get_db),
-) -> EventOut:
-    event = set_event_status(
+    db: AsyncSession = Depends(get_db),
+) -> EventStatusOut:
+    impact = await set_event_status(
         db, club_id=club.id, actor_user_id=auth.user.id, event_id=event_id, status=payload.status
     )
-    db.commit()
-    loaded = db.scalar(
-        select(Event)
-        .options(joinedload(Event.ticket_types).joinedload(TicketType.prices))
-        .where(Event.id == event.id)
-    )
+    await db.commit()
+    loaded = (
+        await db.scalars(
+            select(Event)
+            .options(joinedload(Event.ticket_types).joinedload(TicketType.prices))
+            .where(Event.id == impact.event.id)
+        )
+    ).unique().first()
     assert loaded is not None
-    return _event_out(db, loaded)
+    return EventStatusOut(
+        event=await _event_out(db, loaded),
+        affected_bookings=[AffectedBookingOut(**row) for row in impact.affected],
+    )
 
 
 @router.post("/clubs/{club_id}/events/{event_id}/ticket-types", response_model=TicketTypeOut)
-def add_ticket_type(
+async def add_ticket_type(
     event_id: uuid.UUID,
     payload: TicketTypeIn,
     club: Club = Depends(get_club),
     auth: AuthContext = Depends(require_csrf),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ) -> TicketType:
-    tt = upsert_ticket_type(
+    tt = await upsert_ticket_type(
         db,
         club_id=club.id,
         actor_user_id=auth.user.id,
@@ -162,55 +198,216 @@ def add_ticket_type(
         member_price=payload.member_price,
         public_price=payload.public_price,
     )
-    db.commit()
-    return db.scalar(
-        select(TicketType).options(joinedload(TicketType.prices)).where(TicketType.id == tt.id)
-    )
+    await db.commit()
+    loaded = (
+        await db.scalars(
+            select(TicketType).options(joinedload(TicketType.prices)).where(TicketType.id == tt.id)
+        )
+    ).unique().first()
+    assert loaded is not None
+    return loaded
 
 
-@router.post("/clubs/{club_id}/events/{event_id}/check-in")
-def check_in(
+@router.patch(
+    "/clubs/{club_id}/events/{event_id}/ticket-types/{ticket_type_id}",
+    response_model=TicketTypeOut,
+)
+async def patch_ticket_type(
     event_id: uuid.UUID,
-    payload: CheckInIn,
+    ticket_type_id: uuid.UUID,
+    payload: TicketTypePatch,
     club: Club = Depends(get_club),
     auth: AuthContext = Depends(require_csrf),
-    db: Session = Depends(get_db),
-) -> dict:
-    checkin = check_in_ticket(
+    db: AsyncSession = Depends(get_db),
+) -> TicketType:
+    tt = await update_ticket_type(
         db,
         club_id=club.id,
         actor_user_id=auth.user.id,
         event_id=event_id,
-        qr_token=payload.qr_token,
+        ticket_type_id=ticket_type_id,
+        fields=payload.model_dump(exclude_unset=True),
     )
-    db.commit()
-    return {"status": "checked_in", "ticket_id": str(checkin.ticket_id)}
+    await db.commit()
+    loaded = (
+        await db.scalars(
+            select(TicketType).options(joinedload(TicketType.prices)).where(TicketType.id == tt.id)
+        )
+    ).unique().first()
+    assert loaded is not None
+    return loaded
 
 
-@router.get("/clubs/{club_id}/events/{event_id}/attendance")
-def attendance(
+async def _build_checkin_out(
+    db: AsyncSession,
+    *,
+    checkin: TicketCheckin,
+    ticket: Ticket,
+    duplicate: bool,
+) -> CheckInOut:
+    user = await db.get(User, ticket.user_id)
+    actor = await db.get(User, checkin.checked_in_by_user_id) if checkin.checked_in_by_user_id else None
+    tt = await db.get(TicketType, ticket.ticket_type_id)
+    return CheckInOut(
+        status="duplicate" if duplicate else "checked_in",
+        duplicate=duplicate,
+        ticket_id=ticket.id,
+        event_id=ticket.event_id,
+        attendee_name=user.full_name if user else None,
+        attendee_email=user.email if user else None,
+        ticket_type_name=tt.name if tt else None,
+        ticket_status=ticket.status,
+        checked_in_at=checkin.checked_in_at,
+        checked_in_by_name=actor.full_name if actor else None,
+        original_checked_in_at=checkin.checked_in_at if duplicate else None,
+    )
+
+
+@router.post(
+    "/clubs/{club_id}/events/{event_id}/check-in",
+    response_model=None,
+    responses={
+        200: {"model": CheckInOut, "description": "First successful check-in"},
+        409: {"model": CheckInOut, "description": "Duplicate check-in (same JSON body)"},
+    },
+)
+async def check_in(
+    event_id: uuid.UUID,
+    payload: CheckInIn,
+    club: Club = Depends(get_club),
+    auth: AuthContext = Depends(require_csrf),
+    db: AsyncSession = Depends(get_db),
+):
+    checkin, ticket, duplicate = await check_in_ticket(
+        db,
+        club_id=club.id,
+        actor_user_id=auth.user.id,
+        event_id=event_id,
+        qr_token=payload.qr_token if not payload.ticket_id else None,
+        ticket_id=payload.ticket_id,
+        override_window=payload.override_window,
+    )
+    await db.commit()
+    await db.refresh(checkin)
+    out = await _build_checkin_out(db, checkin=checkin, ticket=ticket, duplicate=duplicate)
+    if duplicate:
+        return JSONResponse(status_code=409, content=out.model_dump(mode="json"))
+    return out
+
+
+@router.get("/clubs/{club_id}/events/{event_id}/check-ins", response_model=list[CheckInListItem])
+async def list_check_ins(
     event_id: uuid.UUID,
     club: Club = Depends(get_club),
     auth: AuthContext = Depends(require_csrf),
-    db: Session = Depends(get_db),
-) -> dict:
-    report = attendance_report(
+    db: AsyncSession = Depends(get_db),
+    limit: int = Query(default=30, ge=1, le=100),
+) -> list[CheckInListItem]:
+    await require_permission(db, club_id=club.id, user_id=auth.user.id, permission="check_in")
+    event = await db.get(Event, event_id)
+    if event is None or event.club_id != club.id:
+        raise NotFoundError("Event not found.")
+    rows = (
+        await db.scalars(
+            select(TicketCheckin)
+            .where(TicketCheckin.event_id == event_id)
+            .order_by(TicketCheckin.checked_in_at.desc())
+            .limit(limit)
+        )
+    ).all()
+    out: list[CheckInListItem] = []
+    for row in rows:
+        ticket = await db.get(Ticket, row.ticket_id)
+        user = await db.get(User, ticket.user_id) if ticket else None
+        actor = await db.get(User, row.checked_in_by_user_id) if row.checked_in_by_user_id else None
+        tt = await db.get(TicketType, ticket.ticket_type_id) if ticket else None
+        out.append(
+            CheckInListItem(
+                id=row.id,
+                ticket_id=row.ticket_id,
+                attendee_name=user.full_name if user else None,
+                attendee_email=user.email if user else None,
+                ticket_type_name=tt.name if tt else None,
+                checked_in_at=row.checked_in_at,
+                checked_in_by_name=actor.full_name if actor else None,
+            )
+        )
+    return out
+
+
+@router.get("/clubs/{club_id}/events/{event_id}/attendees", response_model=list[AttendeeTicketOut])
+async def lookup_attendees(
+    event_id: uuid.UUID,
+    club: Club = Depends(get_club),
+    auth: AuthContext = Depends(require_csrf),
+    db: AsyncSession = Depends(get_db),
+    q: str = Query(min_length=1, max_length=120),
+) -> list[AttendeeTicketOut]:
+    """Name/email lookup returns concrete tickets — a name alone never admits."""
+    await require_permission(db, club_id=club.id, user_id=auth.user.id, permission="check_in")
+    event = await db.get(Event, event_id)
+    if event is None or event.club_id != club.id:
+        raise NotFoundError("Event not found.")
+    term = f"%{q.strip()}%"
+    tickets = (
+        await db.scalars(
+            select(Ticket)
+            .join(User, User.id == Ticket.user_id)
+            .where(
+                Ticket.event_id == event_id,
+                Ticket.club_id == club.id,
+                or_(User.full_name.ilike(term), User.email.ilike(term)),
+            )
+            .order_by(User.full_name)
+            .limit(25)
+        )
+    ).all()
+    out: list[AttendeeTicketOut] = []
+    for ticket in tickets:
+        user = await db.get(User, ticket.user_id)
+        tt = await db.get(TicketType, ticket.ticket_type_id)
+        checkin = await db.scalar(select(TicketCheckin).where(TicketCheckin.ticket_id == ticket.id))
+        out.append(
+            AttendeeTicketOut(
+                ticket_id=ticket.id,
+                user_id=ticket.user_id,
+                attendee_name=user.full_name if user else "",
+                attendee_email=user.email if user else "",
+                ticket_type_name=tt.name if tt else "",
+                ticket_status=ticket.status,
+                checked_in=checkin is not None,
+                checked_in_at=checkin.checked_in_at if checkin else None,
+            )
+        )
+    return out
+
+
+@router.get("/clubs/{club_id}/events/{event_id}/attendance", response_model=AttendanceOut)
+async def attendance(
+    event_id: uuid.UUID,
+    club: Club = Depends(get_club),
+    auth: AuthContext = Depends(require_csrf),
+    db: AsyncSession = Depends(get_db),
+) -> AttendanceOut:
+    data = await attendance_report(
         db, club_id=club.id, actor_user_id=auth.user.id, event_id=event_id
     )
-    return report
+    return AttendanceOut(**data)
 
 
 @router.get("/me/tickets", response_model=list[TicketOut])
-def my_tickets(
+async def my_tickets(
     auth: AuthContext = Depends(get_current_auth),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ) -> list[TicketOut]:
-    tickets = db.scalars(
-        select(Ticket).where(Ticket.user_id == auth.user.id).order_by(Ticket.issued_at.desc())
+    tickets = (
+        await db.scalars(
+            select(Ticket).where(Ticket.user_id == auth.user.id).order_by(Ticket.issued_at.desc())
+        )
     ).all()
     out: list[TicketOut] = []
     for ticket in tickets:
-        event = db.get(Event, ticket.event_id)
+        event = await db.get(Event, ticket.event_id)
         item = TicketOut.model_validate(ticket)
         item.qr_token = unseal_token(ticket.qr_token_sealed)
         item.event_title = event.title if event else None
