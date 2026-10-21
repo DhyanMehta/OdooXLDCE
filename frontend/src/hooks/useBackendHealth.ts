@@ -21,7 +21,7 @@ export function useBackendHealth(): HealthState {
 
     async function check() {
       try {
-        const payload = await api.getHealth();
+        const payload = await api.get("/api/v1/health");
         if (!cancelled) {
           setState({ status: "connected", payload, error: null });
         }

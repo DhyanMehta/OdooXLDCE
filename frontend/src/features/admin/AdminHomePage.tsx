@@ -5,6 +5,7 @@ import { useAuth } from "../../hooks/useAuth";
 import { ADMIN_NAV } from "../../lib/nav";
 
 const DESCRIPTIONS: Record<string, string> = {
+  "/admin/analytics": "Club overview with membership, events, and revenue stats.",
   "/admin/plans": "Create and edit membership plans and dues.",
   "/admin/members": "View affiliations and paid membership state.",
   "/admin/dues": "Confirm offline membership payments.",

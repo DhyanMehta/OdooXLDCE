@@ -107,6 +107,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/clubs/{club_id}/analytics/dashboard": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Club Analytics Dashboard
+         * @description Aggregated club metrics: summary cards, membership health, event check-in rates, revenue, and activity.
+         */
+        get: operations["analytics_get_club_analytics_dashboard"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/clubs/{club_id}/announcements": {
         parameters: {
             query?: never;
@@ -1550,6 +1570,20 @@ export interface components {
             /** User Name */
             user_name?: string | null;
         };
+        /**
+         * AnalyticsDashboardOut
+         * @description Composite response for the dashboard endpoint.
+         */
+        AnalyticsDashboardOut: {
+            /** Event Attendance */
+            event_attendance: components["schemas"]["EventAttendanceOut"][];
+            membership_breakdown: components["schemas"]["MembershipBreakdownOut"];
+            /** Recent Activity */
+            recent_activity: components["schemas"]["RecentActivityOut"][];
+            /** Revenue By Type */
+            revenue_by_type: components["schemas"]["RevenueByTypeOut"][];
+            summary: components["schemas"]["ClubSummaryOut"];
+        };
         /** AnnouncementIn */
         AnnouncementIn: {
             /** Body */
@@ -2009,6 +2043,17 @@ export interface components {
             /** Slug */
             slug: string;
         };
+        /** ClubSummaryOut */
+        ClubSummaryOut: {
+            /** Active Memberships */
+            active_memberships: number;
+            /** Total Members */
+            total_members: number;
+            /** Total Revenue */
+            total_revenue: string;
+            /** Upcoming Events */
+            upcoming_events: number;
+        };
         /** DeliveryOut */
         DeliveryOut: {
             /** Attempts */
@@ -2048,6 +2093,27 @@ export interface components {
             full_name: string;
             /** User Id */
             user_id: string;
+        };
+        /** EventAttendanceOut */
+        EventAttendanceOut: {
+            /** Check In Rate */
+            check_in_rate: string;
+            /** Checked In */
+            checked_in: number;
+            /**
+             * Event Id
+             * Format: uuid
+             */
+            event_id: string;
+            /**
+             * Starts At
+             * Format: date-time
+             */
+            starts_at: string;
+            /** Title */
+            title: string;
+            /** Total Tickets */
+            total_tickets: number;
         };
         /**
          * EventCreateIn
@@ -2444,6 +2510,15 @@ export interface components {
              * Format: uuid
              */
             user_id: string;
+        };
+        /** MembershipBreakdownOut */
+        MembershipBreakdownOut: {
+            /** Active */
+            active: number;
+            /** Expired */
+            expired: number;
+            /** Revoked */
+            revoked: number;
         };
         /** MembershipOrderIn */
         MembershipOrderIn: {
@@ -2880,6 +2955,25 @@ export interface components {
             /** Title */
             title?: string | null;
         };
+        /** RecentActivityOut */
+        RecentActivityOut: {
+            /** Action */
+            action: string;
+            /** Actor Name */
+            actor_name: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Entity Type */
+            entity_type: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+        };
         /**
          * RefundCompleteIn
          * @description Operator confirms they returned the money outside CampusOS.
@@ -3033,6 +3127,15 @@ export interface components {
              * Format: uuid
              */
             recorded_by_user_id: string;
+        };
+        /** RevenueByTypeOut */
+        RevenueByTypeOut: {
+            /** Item Kind */
+            item_kind: string;
+            /** Order Count */
+            order_count: number;
+            /** Total Amount */
+            total_amount: string;
         };
         /** RoleAssignmentEndOut */
         RoleAssignmentEndOut: {
@@ -3960,6 +4063,93 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ClubContextOut"];
+                };
+            };
+            /** @description Application error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppErrorOut"];
+                };
+            };
+            /** @description Application error */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppErrorOut"];
+                };
+            };
+            /** @description Application error */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppErrorOut"];
+                };
+            };
+            /** @description Application error */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppErrorOut"];
+                };
+            };
+            /** @description Application error */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppErrorOut"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationErrorOut"];
+                };
+            };
+            /** @description Application error */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppErrorOut"];
+                };
+            };
+        };
+    };
+    analytics_get_club_analytics_dashboard: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-CSRF-Token"?: string | null;
+            };
+            path: {
+                club_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AnalyticsDashboardOut"];
                 };
             };
             /** @description Application error */
