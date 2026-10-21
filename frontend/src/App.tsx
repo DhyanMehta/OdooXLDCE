@@ -10,6 +10,7 @@ import { AdminMembersPage } from "./features/admin/AdminMembersPage";
 import { AdminMerchandisePage } from "./features/admin/AdminMerchandisePage";
 import { AdminPlansPage } from "./features/admin/AdminPlansPage";
 import { AdminExpenseReviewPage } from "./features/admin/AdminExpenseReviewPage";
+import { AdminAnalyticsPage } from "./features/admin/AdminAnalyticsPage";
 import { AdminFinancePage } from "./features/admin/AdminFinancePage";
 import { AdminProjectsPage } from "./features/admin/AdminProjectsPage";
 import { AdminRefundsPage } from "./features/admin/AdminRefundsPage";
@@ -98,6 +99,7 @@ export default function App() {
             <Route path="admin/projects" element={<AdminProjectsPage />} />
             <Route path="admin/expenses" element={<AdminExpenseReviewPage />} />
             <Route path="admin/refunds" element={<AdminRefundsPage />} />
+            <Route path="admin/analytics" element={<AdminAnalyticsPage />} />
             <Route path="admin/finance" element={<AdminFinancePage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>

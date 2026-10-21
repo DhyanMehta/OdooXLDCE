@@ -52,5 +52,6 @@ export const ADMIN_NAV: NavItem[] = [
     admin: true,
   },
   { to: "/admin/refunds", label: "Refunds", permission: "record_refunds", admin: true },
+  { to: "/admin/analytics", label: "Analytics", permission: "view_finance", admin: true },
   { to: "/admin/finance", label: "Finance", permission: "view_finance", admin: true },
 ];

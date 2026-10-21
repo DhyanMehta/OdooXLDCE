@@ -58,6 +58,47 @@
         "title": "AffectedBookingOut",
         "type": "object"
       },
+      "AnalyticsDashboardOut": {
+        "description": "Composite response for the dashboard endpoint.",
+        "properties": {
+          "event_attendance": {
+            "items": {
+              "$ref": "#/components/schemas/EventAttendanceOut"
+            },
+            "title": "Event Attendance",
+            "type": "array"
+          },
+          "membership_breakdown": {
+            "$ref": "#/components/schemas/MembershipBreakdownOut"
+          },
+          "recent_activity": {
+            "items": {
+              "$ref": "#/components/schemas/RecentActivityOut"
+            },
+            "title": "Recent Activity",
+            "type": "array"
+          },
+          "revenue_by_type": {
+            "items": {
+              "$ref": "#/components/schemas/RevenueByTypeOut"
+            },
+            "title": "Revenue By Type",
+            "type": "array"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/ClubSummaryOut"
+          }
+        },
+        "required": [
+          "summary",
+          "membership_breakdown",
+          "event_attendance",
+          "revenue_by_type",
+          "recent_activity"
+        ],
+        "title": "AnalyticsDashboardOut",
+        "type": "object"
+      },
       "AnnouncementIn": {
         "properties": {
           "body": {
@@ -1225,6 +1266,35 @@
         "title": "ClubOut",
         "type": "object"
       },
+      "ClubSummaryOut": {
+        "properties": {
+          "active_memberships": {
+            "title": "Active Memberships",
+            "type": "integer"
+          },
+          "total_members": {
+            "title": "Total Members",
+            "type": "integer"
+          },
+          "total_revenue": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Total Revenue",
+            "type": "string"
+          },
+          "upcoming_events": {
+            "title": "Upcoming Events",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total_members",
+          "active_memberships",
+          "upcoming_events",
+          "total_revenue"
+        ],
+        "title": "ClubSummaryOut",
+        "type": "object"
+      },
       "DeliveryOut": {
         "properties": {
           "attempts": {
@@ -1315,6 +1385,47 @@
           "email"
         ],
         "title": "DirectoryPersonOut",
+        "type": "object"
+      },
+      "EventAttendanceOut": {
+        "properties": {
+          "check_in_rate": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Check In Rate",
+            "type": "string"
+          },
+          "checked_in": {
+            "title": "Checked In",
+            "type": "integer"
+          },
+          "event_id": {
+            "format": "uuid",
+            "title": "Event Id",
+            "type": "string"
+          },
+          "starts_at": {
+            "format": "date-time",
+            "title": "Starts At",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "total_tickets": {
+            "title": "Total Tickets",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "event_id",
+          "title",
+          "starts_at",
+          "total_tickets",
+          "checked_in",
+          "check_in_rate"
+        ],
+        "title": "EventAttendanceOut",
         "type": "object"
       },
       "EventCreateIn": {
@@ -2254,6 +2365,29 @@
           "effective_state"
         ],
         "title": "MemberPersonOut",
+        "type": "object"
+      },
+      "MembershipBreakdownOut": {
+        "properties": {
+          "active": {
+            "title": "Active",
+            "type": "integer"
+          },
+          "expired": {
+            "title": "Expired",
+            "type": "integer"
+          },
+          "revoked": {
+            "title": "Revoked",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "active",
+          "expired",
+          "revoked"
+        ],
+        "title": "MembershipBreakdownOut",
         "type": "object"
       },
       "MembershipOrderIn": {
@@ -3413,6 +3547,48 @@
         "title": "ProjectPatch",
         "type": "object"
       },
+      "RecentActivityOut": {
+        "properties": {
+          "action": {
+            "title": "Action",
+            "type": "string"
+          },
+          "actor_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actor Name"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "entity_type": {
+            "title": "Entity Type",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "action",
+          "entity_type",
+          "actor_name",
+          "created_at"
+        ],
+        "title": "RecentActivityOut",
+        "type": "object"
+      },
       "RefundCompleteIn": {
         "description": "Operator confirms they returned the money outside CampusOS.",
         "properties": {
@@ -3736,6 +3912,30 @@
           "created_at"
         ],
         "title": "ReimbursementOut",
+        "type": "object"
+      },
+      "RevenueByTypeOut": {
+        "properties": {
+          "item_kind": {
+            "title": "Item Kind",
+            "type": "string"
+          },
+          "order_count": {
+            "title": "Order Count",
+            "type": "integer"
+          },
+          "total_amount": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Total Amount",
+            "type": "string"
+          }
+        },
+        "required": [
+          "item_kind",
+          "total_amount",
+          "order_count"
+        ],
+        "title": "RevenueByTypeOut",
         "type": "object"
       },
       "RoleAssignmentEndOut": {
@@ -5464,6 +5664,126 @@
         "summary": "Get Club By Slug",
         "tags": [
           "clubs"
+        ]
+      }
+    },
+    "/api/v1/clubs/{club_id}/analytics/dashboard": {
+      "get": {
+        "description": "Aggregated club metrics: summary cards, membership health, event check-in rates, revenue, and activity.",
+        "operationId": "analytics_get_club_analytics_dashboard",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "club_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Club Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnalyticsDashboardOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppErrorOut"
+                }
+              }
+            },
+            "description": "Application error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppErrorOut"
+                }
+              }
+            },
+            "description": "Application error"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppErrorOut"
+                }
+              }
+            },
+            "description": "Application error"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppErrorOut"
+                }
+              }
+            },
+            "description": "Application error"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppErrorOut"
+                }
+              }
+            },
+            "description": "Application error"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorOut"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppErrorOut"
+                }
+              }
+            },
+            "description": "Application error"
+          }
+        },
+        "summary": "Get Club Analytics Dashboard",
+        "tags": [
+          "analytics"
         ]
       }
     },

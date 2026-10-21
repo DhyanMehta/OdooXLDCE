@@ -17,6 +17,8 @@ export function resolvePython() {
   const candidates = [
     path.join(REPO_ROOT, "backend", ".venv", win ? "Scripts/python.exe" : "bin/python"),
     path.join(REPO_ROOT, "backend", ".venv", win ? "Scripts/python" : "bin/python3"),
+    path.join(REPO_ROOT, "backend", "venv", win ? "Scripts/python.exe" : "bin/python"),
+    path.join(REPO_ROOT, "backend", "venv", win ? "Scripts/python" : "bin/python3"),
   ];
   for (const c of candidates) {
     if (fs.existsSync(c)) return c;
