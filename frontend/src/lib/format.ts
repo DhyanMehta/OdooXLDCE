@@ -15,43 +15,27 @@ export function fromLocalInput(value: string): string {
 export function formatCountdown(expiresAt: string | null | undefined, now = Date.now()): string | null {
   if (!expiresAt) return null;
   const ms = new Date(expiresAt).getTime() - now;
-  if (Number.isNaN(ms)) return null;
+  if (!Number.isFinite(ms)) return null;
   if (ms <= 0) return "Expired";
-  const totalSec = Math.floor(ms / 1000);
-  const m = Math.floor(totalSec / 60);
-  const s = totalSec % 60;
-  if (m >= 60) {
-    const h = Math.floor(m / 60);
-    const rm = m % 60;
-    return `${h}h ${rm}m ${s}s`;
+
+  // Keep a live order at one second until its actual expiration time.
+  const totalSeconds = Math.ceil(ms / 1000);
+  const totalMinutes = Math.floor(totalSeconds / 60);
+  const seconds = String(totalSeconds % 60).padStart(2, "0");
+  if (totalMinutes >= 60) {
+    const hours = Math.floor(totalMinutes / 60);
+    return `${hours}h ${totalMinutes % 60}m ${seconds}s`;
   }
-  return `${m}m ${String(s).padStart(2, "0")}s`;
+  return `${totalMinutes}m ${seconds}s`;
 }
 
+const warningStatuses = new Set(["pending", "draft", "upcoming", "scheduled", "refund_required"]);
+const dangerStatuses = new Set(["cancelled", "failed", "expired", "revoked", "ended", "none"]);
+
 export function statusBadgeClass(status: string): string {
-  const s = status.toLowerCase();
-  if (s === "paid" || s === "active" || s === "published" || s === "confirmed" || s === "valid") {
-    return "badge";
-  }
-  if (
-    s === "pending" ||
-    s === "draft" ||
-    s === "upcoming" ||
-    s === "scheduled" ||
-    s === "refund_required"
-  ) {
-    return "badge badge--warn";
-  }
-  if (
-    s === "cancelled" ||
-    s === "failed" ||
-    s === "expired" ||
-    s === "revoked" ||
-    s === "ended" ||
-    s === "none"
-  ) {
-    return "badge badge--danger";
-  }
+  const normalized = status.trim().toLowerCase();
+  if (warningStatuses.has(normalized)) return "badge badge--warn";
+  if (dangerStatuses.has(normalized)) return "badge badge--danger";
   return "badge";
 }
 
