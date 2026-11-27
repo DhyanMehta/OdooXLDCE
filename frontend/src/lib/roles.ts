@@ -20,6 +20,6 @@ export function initials(name: string): string {
 }
 
 export function prettyRoleCode(code: string | null | undefined): string {
-  if (!code) return "—";
-  return code.replaceAll("_", " ");
+  const label = code?.replace(/[_\s]+/g, " ").trim();
+  return label || "—";
 }
